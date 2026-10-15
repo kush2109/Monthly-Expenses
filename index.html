@@ -113,6 +113,19 @@ body:has(#authPanel:not([hidden])) header{display:none}
 #authPanel #recoveryNote{grid-row:6;margin:16px 30px 24px;text-align:center;line-height:1.5}
 @media(max-width:520px){#authPanel.auth-shell{margin:18px auto 32px;padding:0 14px}#authPanel .auth-card{border-radius:21px}#authPanel .auth-card:before{height:210px;padding:23px 24px 21px;font-size:1.2rem}#authPanel .auth-card:after{right:28px;top:37px;transform:scale(.88) rotate(5deg)}#authPanel #authTitle,#authPanel .auth-card>p.note,#authPanel #authForm,#authPanel .auth-switch,#authPanel #recoveryNote{margin-left:23px;margin-right:23px}}
 
+
+/* Sign-up password guidance: shown only while creating an account. */
+#authPanel .password-input-wrap{position:relative}
+#authPanel .password-input-wrap #authPassword{padding-right:54px}
+#authPanel .password-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:36px;height:36px;border:0;border-radius:50%;background:transparent;color:#53627b;cursor:pointer;font-size:1.05rem}
+#authPanel .password-rules{margin-top:9px;padding:12px 14px;border:2px solid #35dfbb;border-radius:9px;background:#effffb;color:#516b65;box-shadow:0 4px 10px rgba(24,193,159,.16);font-size:.78rem}
+#authPanel .password-rules strong{display:block;margin-bottom:5px;color:#287d6b}
+#authPanel .password-rules ul{display:grid;gap:3px;list-style:none;margin:0;padding:0}
+#authPanel .password-rules li{color:#87928f}
+#authPanel .password-rules li.valid{color:#16865f;font-weight:600}
+#authPanel.signup-mode .password-rules{display:block}
+#authPanel.signup-mode .password-toggle{display:block}
+
 </style>
 </head>
 <body>
@@ -142,7 +155,7 @@ body:has(#authPanel:not([hidden])) header{display:none}
     <p class="note">Use the same username and password on your phone and laptop to sync your data.</p>
     <form id="authForm" novalidate>
       <div class="f"><label for="authUsername">Username</label><input class="in" id="authUsername" type="text" minlength="3" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. Admin@12345"></div>
-      <div class="f"><label for="authPassword">Password</label><input class="in" id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="6+ chars, upper/lowercase, number, symbol"></div>
+      <div class="f password-field"><label for="authPassword">Password</label><div class="password-input-wrap"><input class="in" id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="Your password"><button class="password-toggle" id="togglePassword" type="button" aria-label="Show password" hidden>◉</button></div><div class="password-rules" id="passwordRules" hidden aria-live="polite"><strong>Password must have:</strong><ul><li id="ruleLength">× At least 8 characters</li><li id="ruleUpper">× One uppercase letter</li><li id="ruleLower">× One lowercase letter</li><li id="ruleNumber">× One number</li><li id="ruleSymbol">× One special character</li></ul></div></div>
       <div id="authError" class="auth-error" role="alert"></div>
       <button class="btn" id="authSubmit" type="submit">Sign in</button>
     </form>
@@ -736,6 +749,8 @@ function submit(ev){
 }
 
 /* ---------- init ---------- */
+function passwordChecks(value){return[value.length>=8,/[A-Z]/.test(value),/[a-z]/.test(value),/[0-9]/.test(value),/[^A-Za-z0-9]/.test(value)]}
+function updatePasswordUI(){var signup=authMode==="signup",panel=$("authPanel"),rules=$("passwordRules"),toggle=$("togglePassword"),password=$("authPassword");panel.classList.toggle("signup-mode",signup);rules.hidden=!signup;toggle.hidden=!signup;password.placeholder=signup?"Create a strong password":"Your password";if(!signup){password.type="password";toggle.textContent="◉";toggle.setAttribute("aria-label","Show password")}var checks=passwordChecks(password.value),ids=["ruleLength","ruleUpper","ruleLower","ruleNumber","ruleSymbol"],labels=["At least 8 characters","One uppercase letter","One lowercase letter","One number","One special character"];ids.forEach(function(id,i){var row=$(id);row.classList.toggle("valid",checks[i]);row.textContent=(checks[i]?"✓ ":"× ")+labels[i]})}
 function init(){
   var cs=$("currency");
   CURRENCIES.forEach(function(c){var o=el("option",null,c[1]);o.value=c[0];cs.appendChild(o)});
@@ -743,7 +758,7 @@ function init(){
     ev.preventDefault();if(authBusy)return;showAuthError();
     var email=usernameEmail($("authUsername").value),password=$("authPassword").value;
     if(!email){showAuthError("Use 3–24 characters. Start with a letter or number; then use letters, numbers, _, -, or @.");return}
-    if(password.length<6){showAuthError("Password must be 6+ chars, upper/lowercase, number, symbol.");return}
+    if(authMode==="signup"&&!passwordChecks(password).every(Boolean)){showAuthError("Meet all five password requirements before creating your account.");updatePasswordUI();return}
     authBusy=true;$("authSubmit").disabled=true;$("authModeBtn").disabled=true;$("authSubmit").textContent=authMode==="signup"?"Creating account…":"Signing in…";
     try{
       var credential=authMode==="signup"?await createUserWithEmailAndPassword(auth,email,password):await signInWithEmailAndPassword(auth,email,password);
@@ -752,7 +767,7 @@ function init(){
     }catch(err){showAuthError(authErrorText(err))}
     finally{authBusy=false;$("authSubmit").disabled=false;$("authModeBtn").disabled=false;$("authSubmit").textContent=authMode==="signup"?"Create account":"Sign in"}
   });
-  $("authModeBtn").addEventListener("click",function(){authMode=authMode==="signin"?"signup":"signin";showAuthError();$("authTitle").textContent=authMode==="signup"?"Create your expense account":"Sign in to your expense tracker";$("authSubmit").textContent=authMode==="signup"?"Create account":"Sign in";$("authPassword").setAttribute("autocomplete",authMode==="signup"?"new-password":"current-password");$("authModeBtn").textContent=authMode==="signup"?"I already have an account":"Create a new account"});
+  $("authModeBtn").addEventListener("click",function(){authMode=authMode==="signin"?"signup":"signin";showAuthError();$("authTitle").textContent=authMode==="signup"?"Create your expense account":"Sign in to your expense tracker";$("authSubmit").textContent=authMode==="signup"?"Create account":"Sign in";$("authPassword").setAttribute("autocomplete",authMode==="signup"?"new-password":"current-password");$("authModeBtn").textContent=authMode==="signup"?"I already have an account":"Create a new account";updatePasswordUI()});$("authPassword").addEventListener("input",updatePasswordUI);$("togglePassword").addEventListener("click",function(){var input=$("authPassword"),show=input.type==="password";input.type=show?"text":"password";this.textContent=show?"⊘":"◉";this.setAttribute("aria-label",show?"Hide password":"Show password")});updatePasswordUI();
   $("signOutBtn").addEventListener("click",async function(){try{await signOut(auth)}catch(e){toast("Could not sign out. Please try again.")}});
   $("exportBtn").addEventListener("click",exportBackup);
   $("csvBtn").addEventListener("click",exportCSV);
