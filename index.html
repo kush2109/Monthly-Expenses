@@ -121,7 +121,7 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
     <p class="note">Use the same username and password on your phone and laptop to sync your data.</p>
     <form id="authForm" novalidate>
       <div class="f"><label for="authUsername">Username</label><input class="in" id="authUsername" type="text" minlength="3" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. kush2109"></div>
-      <div class="f"><label for="authPassword">Password</label><input class="in" id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="At least 8 characters"></div>
+      <div class="f"><label for="authPassword">Password</label><input class="in" id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="6+ chars, upper/lowercase, number, symbol"></div>
       <div id="authError" class="auth-error" role="alert"></div>
       <button class="btn" id="authSubmit" type="submit">Sign in</button>
     </form>
@@ -325,7 +325,7 @@ async function writeCloudState(uid,data){
 function persistLocalOnly(){try{localStorage.setItem(currentStorageKey,JSON.stringify(stateData()))}catch(e){}}
 function showAuthError(msg){$("authError").textContent=msg||""}
 function usernameEmail(value){var name=String(value||"").trim().toLowerCase();if(!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(name))return null;return name+"@login.monthly-expenses-80080.firebaseapp.com"}
-function authErrorText(err){var code=err&&err.code||"";if(code==="auth/email-already-in-use")return"That username is already taken.";if(code==="auth/invalid-credential"||code==="auth/wrong-password"||code==="auth/user-not-found")return"Username or password is incorrect.";if(code==="auth/weak-password")return"Choose a stronger password (at least 8 characters).";if(code==="auth/network-request-failed")return"Connection problem. Check your internet and try again.";return"Could not sign in. Please check your details and try again."}
+function authErrorText(err){var code=err&&err.code||"";if(code==="auth/email-already-in-use")return"That username is already taken.";if(code==="auth/invalid-credential"||code==="auth/wrong-password"||code==="auth/user-not-found")return"Username or password is incorrect.";if(code==="auth/weak-password")return"Choose a stronger password (6+ chars, upper/lowercase, number, symbol).";if(code==="auth/network-request-failed")return"Connection problem. Check your internet and try again.";return"Could not sign in. Please check your details and try again."}
 async function activateAccount(user){
   if(cloudUnsub){cloudUnsub();cloudUnsub=null}cloudMonthSignatures={};cloudSettingsSignature="";currentUser=user;cloudReady=false;$("loadingPanel").hidden=false;$("authPanel").hidden=true;$("appMain").hidden=true;$("appControls").hidden=true;
   $("loadingPanel").querySelector("h2").textContent="Loading your expenses…";
@@ -722,7 +722,7 @@ function init(){
     ev.preventDefault();if(authBusy)return;showAuthError();
     var email=usernameEmail($("authUsername").value),password=$("authPassword").value;
     if(!email){showAuthError("Use 3–24 characters: letters, numbers, underscores, or hyphens.");return}
-    if(password.length<8){showAuthError("Password must be at least 8 characters.");return}
+    if(password.length<6){showAuthError("Password must be 6+ chars, upper/lowercase, number, symbol.");return}
     authBusy=true;$("authSubmit").disabled=true;$("authModeBtn").disabled=true;$("authSubmit").textContent=authMode==="signup"?"Creating account…":"Signing in…";
     try{
       var credential=authMode==="signup"?await createUserWithEmailAndPassword(auth,email,password):await signInWithEmailAndPassword(auth,email,password);
