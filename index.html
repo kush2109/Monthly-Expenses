@@ -228,7 +228,7 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import { getFirestore, doc, collection, getDoc, getDocs, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyB28g-N6YBAsvGZrkp0UqzjH0TtKkzO2ds",
@@ -245,7 +245,7 @@ const db = getFirestore(firebaseApp);
 (function(){
 "use strict";
 var KEY="expense-tracker-v1";
-var currentStorageKey=KEY,currentUser=null,cloudReady=false,cloudUnsub=null,cloudTimer=null,cloudWriteInFlight=false,suppressCloudSave=false,authMode="signin",authBusy=false;
+var currentStorageKey=KEY,currentUser=null,cloudReady=false,cloudUnsub=null,cloudTimer=null,cloudWriteInFlight=false,suppressCloudSave=false,authMode="signin",authBusy=false,cloudMonthSignatures={},cloudSettingsSignature="";
 var DEFAULT_CATS=["Rent","Internet/Mobile","Bills","Groceries","Transportation","Eating Out","Shopping","Entertainment","Emergency Fund","Education","Miscellaneous"];
 var CURRENCIES=[["EUR","€ Euro"],["USD","$ US Dollar"],["GBP","£ British Pound"],["INR","₹ Indian Rupee"],["CAD","$ Canadian Dollar"],["AUD","$ Australian Dollar"],["CHF","CHF Swiss Franc"],["JPY","¥ Japanese Yen"],["AED","AED UAE Dirham"]];
 var COLORS=["#2d3366","#4a55b8","#8c96e6","#b8bff0","#6f4ab8","#a07be0","#3b82a8","#7fb6d4","#c05a8f","#e29bc0","#4f9d86","#9ccfbf","#d49a3a","#8a8fa6"];
@@ -307,31 +307,45 @@ function queueCloudSave(){
   cloudTimer=setTimeout(async function(){
     cloudTimer=null;if(!currentUser||currentUser.uid!==uid||!cloudReady)return;
     cloudWriteInFlight=true;
-    try{await setDoc(doc(db,"users",uid,"appData","state"),data);if(currentUser&&currentUser.uid===uid)$("syncStatus").textContent="Synced"}
+    try{await writeCloudState(uid,data);if(currentUser&&currentUser.uid===uid)$("syncStatus").textContent="Synced"}
     catch(err){if(currentUser&&currentUser.uid===uid){$("syncStatus").textContent="Sync failed";toast("Cloud sync failed. Your data is still saved on this device.")}}
     finally{cloudWriteInFlight=false}
   },350);
+}
+function settingsData(data){return{categories:data.categories,currency:data.currency,month:data.month,dark:data.dark}}
+function monthGroups(data){var groups={};function group(date){var month=date.slice(0,7);if(!groups[month])groups[month]={expenses:[],incomes:[]};return groups[month]}data.expenses.forEach(function(e){group(e.date).expenses.push(e)});data.incomes.forEach(function(e){group(e.date).incomes.push(e)});return groups}
+async function writeCloudState(uid,data){
+  var settings=settingsData(data),settingsSignature=JSON.stringify(settings),settingsRef=doc(db,"users",uid,"appData","settings");
+  if(settingsSignature!==cloudSettingsSignature){await setDoc(settingsRef,settings);cloudSettingsSignature=settingsSignature}
+  var groups=monthGroups(data),monthsRef=collection(db,"users",uid,"months"),tasks=[];
+  Object.keys(groups).forEach(function(month){var signature=JSON.stringify(groups[month]);if(signature!==cloudMonthSignatures[month]){tasks.push(setDoc(doc(monthsRef,month),groups[month]).then(function(){cloudMonthSignatures[month]=signature}))}});
+  Object.keys(cloudMonthSignatures).forEach(function(month){if(!groups[month]){tasks.push(deleteDoc(doc(monthsRef,month)).then(function(){delete cloudMonthSignatures[month]}))}});
+  await Promise.all(tasks);
 }
 function persistLocalOnly(){try{localStorage.setItem(currentStorageKey,JSON.stringify(stateData()))}catch(e){}}
 function showAuthError(msg){$("authError").textContent=msg||""}
 function usernameEmail(value){var name=String(value||"").trim().toLowerCase();if(!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(name))return null;return name+"@login.monthly-expenses-80080.firebaseapp.com"}
 function authErrorText(err){var code=err&&err.code||"";if(code==="auth/email-already-in-use")return"That username is already taken.";if(code==="auth/invalid-credential"||code==="auth/wrong-password"||code==="auth/user-not-found")return"Username or password is incorrect.";if(code==="auth/weak-password")return"Choose a stronger password (at least 8 characters).";if(code==="auth/network-request-failed")return"Connection problem. Check your internet and try again.";return"Could not sign in. Please check your details and try again."}
 async function activateAccount(user){
-  if(cloudUnsub){cloudUnsub();cloudUnsub=null}currentUser=user;cloudReady=false;$("loadingPanel").hidden=false;$("authPanel").hidden=true;$("appMain").hidden=true;$("appControls").hidden=true;
+  if(cloudUnsub){cloudUnsub();cloudUnsub=null}cloudMonthSignatures={};cloudSettingsSignature="";currentUser=user;cloudReady=false;$("loadingPanel").hidden=false;$("authPanel").hidden=true;$("appMain").hidden=true;$("appControls").hidden=true;
   $("loadingPanel").querySelector("h2").textContent="Loading your expenses…";
   var uidKey=KEY+"-"+user.uid,hadUidData=localStorage.getItem(uidKey)!==null,legacyData=!hadUidData&&localStorage.getItem(KEY)!==null;
   currentStorageKey=hadUidData?uidKey:(legacyData?KEY:uidKey);resetState();load(currentStorageKey);if(!state.month)state.month=todayStr().slice(0,7);var localData=stateData();
   try{
-    var ref=doc(db,"users",user.uid,"appData","state"),snap=await getDoc(ref),merged;
-    if(snap.exists()){
-      merged=mergeCloudAndLocal(snap.data(),localData);state=merged;
-      if(JSON.stringify(merged)!==JSON.stringify(normalizeCloudData(snap.data())))await setDoc(ref,merged);
-    }else{state=localData;await setDoc(ref,stateData())}
+    var settingsRef=doc(db,"users",user.uid,"appData","settings"),monthsRef=collection(db,"users",user.uid,"months");
+    var results=await Promise.all([getDoc(settingsRef),getDocs(monthsRef)]),settingsSnap=results[0],monthsSnap=results[1],remoteExpenses=[],remoteIncomes=[];
+    monthsSnap.forEach(function(monthDoc){var md=monthDoc.data();cloudMonthSignatures[monthDoc.id]=JSON.stringify(md);var clean=normalizeCloudData({expenses:md.expenses,incomes:md.incomes});remoteExpenses=remoteExpenses.concat(clean.expenses);remoteIncomes=remoteIncomes.concat(clean.incomes)});
+    var remoteRaw={expenses:remoteExpenses,incomes:remoteIncomes};if(settingsSnap.exists()){var settingValues=settingsSnap.data();Object.keys(settingValues).forEach(function(k){remoteRaw[k]=settingValues[k]});cloudSettingsSignature=JSON.stringify(settingsData(normalizeCloudData(remoteRaw)))}
+    var remoteState=normalizeCloudData(remoteRaw),hasCloud=settingsSnap.exists()||!monthsSnap.empty;
+    state=hasCloud?mergeCloudAndLocal(remoteState,localData):localData;
+    await writeCloudState(user.uid,stateData());
     currentStorageKey=uidKey;persistLocalOnly();if(legacyData)localStorage.removeItem(KEY);
     var cs=$("currency");cs.value=state.currency;$("month").value=state.month;document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";
     $("accountName").textContent="Signed in as "+(user.displayName||String(user.email||"").split("@")[0]);$("syncStatus").textContent="Synced";
     $("loadingPanel").hidden=true;$("appControls").hidden=false;$("appMain").hidden=false;cloudReady=true;render();
-    cloudUnsub=onSnapshot(ref,function(remote){if(!remote.exists()||cloudWriteInFlight||cloudTimer)return;var incoming=normalizeCloudData(remote.data());if(!incoming)return;state=incoming;if(!state.month)state.month=todayStr().slice(0,7);persistLocalOnly();$("currency").value=state.currency;$("month").value=state.month;document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";render();$("syncStatus").textContent="Synced"},function(){if(currentUser&&currentUser.uid===uid)$("syncStatus").textContent="Offline"});
+    var settingsUnsub=onSnapshot(settingsRef,function(remote){if(!remote.exists()||cloudWriteInFlight||cloudTimer)return;var values=remote.data(),incoming=normalizeCloudData(Object.assign(stateData(),values));cloudSettingsSignature=JSON.stringify(settingsData(incoming));state.categories=incoming.categories;state.currency=incoming.currency;state.month=incoming.month||state.month;state.dark=incoming.dark;persistLocalOnly();$("currency").value=state.currency;$("month").value=state.month;document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";render();$("syncStatus").textContent="Synced"},function(){if(currentUser&&currentUser.uid===user.uid)$("syncStatus").textContent="Offline"});
+    var monthsUnsub=onSnapshot(monthsRef,function(remote){if(cloudWriteInFlight||cloudTimer)return;var expenses=[],incomes=[];cloudMonthSignatures={};remote.forEach(function(monthDoc){var md=monthDoc.data();cloudMonthSignatures[monthDoc.id]=JSON.stringify(md);var clean=normalizeCloudData({expenses:md.expenses,incomes:md.incomes});expenses=expenses.concat(clean.expenses);incomes=incomes.concat(clean.incomes)});state.expenses=expenses;state.incomes=incomes;persistLocalOnly();render();$("syncStatus").textContent="Synced"},function(){if(currentUser&&currentUser.uid===user.uid)$("syncStatus").textContent="Offline"});
+    cloudUnsub=function(){settingsUnsub();monthsUnsub()};
   }catch(err){cloudReady=false;$("loadingPanel").hidden=true;$("authPanel").hidden=false;$("appMain").hidden=true;$("appControls").hidden=true;showAuthError("Could not load cloud data. Check your connection and try again.");}
 }
 function pad(n){return n<10?"0"+n:""+n}
