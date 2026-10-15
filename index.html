@@ -697,7 +697,7 @@ function resetForm(){
   $("date").value=defaultDate();fillCategories("");
 }
 function defaultDate(){
-  var t=todayStr();return t.slice(0,7)===state.month?t:state.month+"-01";
+  return todayStr();
 }
 function startEdit(id){
   var x=state.expenses.filter(function(e){return e.id===id})[0];if(!x)return;
