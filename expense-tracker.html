@@ -85,6 +85,7 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
 #toast.on{opacity:1;pointer-events:auto}#toast button{border:0;background:transparent;color:#fff;text-decoration:underline;font-weight:700;cursor:pointer;padding:4px}
 .editing{border:2px solid var(--accent)}
 .note{font-size:.8rem;color:var(--muted);margin:0}
+.auth-shell{max-width:520px;margin:32px auto;padding:0 16px}.auth-card{display:grid;gap:12px}.auth-card h2{margin:0;color:var(--navy)}.auth-card p{margin:0}.auth-switch{justify-self:start}.auth-error{color:var(--danger);min-height:1.2em;font-size:.9rem}.account-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.account-name{color:#fff;font-size:.85rem}.sync-status{color:#d7dcff;font-size:.8rem}
 @media(max-width:860px){.grid{grid-template-columns:1fr}}
 @media(max-width:560px){
   .stats{grid-template-columns:1fr 1fr}
@@ -100,7 +101,8 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
       <h1>Monthly Expense Dashboard</h1>
       <p>See what comes in and where it goes, one month at a time.</p>
     </div>
-    <div class="ctrls">
+    <div class="ctrls" id="appControls" hidden>
+      <div class="account-bar"><span class="account-name" id="accountName"></span><span class="sync-status" id="syncStatus" aria-live="polite">Loading account…</span><button class="btn sec" type="button" id="signOutBtn">Sign out</button></div>
       <label>Month<input type="month" id="month" aria-label="Month to review"></label>
       <label>Currency<select id="currency" aria-label="Currency"></select></label>
       <button class="btn sec" type="button" id="themeBtn">Dark mode</button>
@@ -112,7 +114,23 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
   </div>
 </header>
 
-<main>
+<section class="auth-shell" id="loadingPanel" aria-live="polite"><div class="card auth-card"><h2>Connecting to your account…</h2><p class="note">Your expenses will sync across devices after you sign in.</p></div></section>
+<section class="auth-shell" id="authPanel" hidden aria-labelledby="authTitle">
+  <div class="card auth-card">
+    <h2 id="authTitle">Sign in to your expense tracker</h2>
+    <p class="note">Use the same username and password on your phone and laptop to sync your data.</p>
+    <form id="authForm" novalidate>
+      <div class="f"><label for="authUsername">Username</label><input class="in" id="authUsername" type="text" minlength="3" maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false" required placeholder="e.g. kush2109"></div>
+      <div class="f"><label for="authPassword">Password</label><input class="in" id="authPassword" type="password" minlength="8" autocomplete="current-password" required placeholder="At least 8 characters"></div>
+      <div id="authError" class="auth-error" role="alert"></div>
+      <button class="btn" id="authSubmit" type="submit">Sign in</button>
+    </form>
+    <button class="btn sec auth-switch" id="authModeBtn" type="button">Create a new account</button>
+    <p class="note" id="recoveryNote">No email is used. Keep your username and password safe; password recovery is not available.</p>
+  </div>
+</section>
+
+<main id="appMain" hidden>
   <section class="stats" aria-label="Summary">
     <div class="card stat"><small>Income</small><b id="sInc">–</b><span id="sIncNote">&nbsp;</span></div>
     <div class="card stat"><small>Total spent</small><b id="sTotal">–</b><span id="sMonth"></span></div>
@@ -202,15 +220,32 @@ body.dark .in{background:#191d33;border-color:#4b5278;color:var(--ink)}
     </div>
     <div id="listWrap"></div>
   </section>
-  <p class="note">Your data is stored only in this browser. Changing currency changes how amounts are displayed; it does not convert values.</p>
+  <p class="note">Your data syncs through your Firebase account across devices. Keep an exported backup too. Changing currency changes how amounts are displayed; it does not convert values.</p>
 </main>
 <div id="toast" role="status" aria-live="polite"><span id="toastText"></span><button id="toastAction" type="button" hidden></button></div>
 <div id="confirmLayer" class="modalback" hidden><section class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle"><h2 id="confirmTitle">Confirm action</h2><p id="confirmText"></p><div class="actions"><button class="btn del" id="confirmYes" type="button">Delete</button><button class="btn sec" id="confirmNo" type="button">Cancel</button></div></section></div>
 
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, updateProfile } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB28g-N6YBAsvGZrkp0UqzjH0TtKkzO2ds",
+  authDomain: "monthly-expenses-80080.firebaseapp.com",
+  projectId: "monthly-expenses-80080",
+  storageBucket: "monthly-expenses-80080.firebasestorage.app",
+  messagingSenderId: "956034987440",
+  appId: "1:956034987440:web:cd8606f4cde4e5c44ed275"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const db = getFirestore(firebaseApp);
+
 (function(){
 "use strict";
 var KEY="expense-tracker-v1";
+var currentStorageKey=KEY,currentUser=null,cloudReady=false,cloudUnsub=null,cloudTimer=null,cloudWriteInFlight=false,suppressCloudSave=false,authMode="signin",authBusy=false;
 var DEFAULT_CATS=["Rent","Internet/Mobile","Bills","Groceries","Transportation","Eating Out","Shopping","Entertainment","Emergency Fund","Education","Miscellaneous"];
 var CURRENCIES=[["EUR","€ Euro"],["USD","$ US Dollar"],["GBP","£ British Pound"],["INR","₹ Indian Rupee"],["CAD","$ Canadian Dollar"],["AUD","$ Australian Dollar"],["CHF","CHF Swiss Franc"],["JPY","¥ Japanese Yen"],["AED","AED UAE Dirham"]];
 var COLORS=["#2d3366","#4a55b8","#8c96e6","#b8bff0","#6f4ab8","#a07be0","#3b82a8","#7fb6d4","#c05a8f","#e29bc0","#4f9d86","#9ccfbf","#d49a3a","#8a8fa6"];
@@ -221,9 +256,9 @@ var editingId=null;
 var pendingDelete=null,undoDelete=null,activeCategory="";
 var $=function(id){return document.getElementById(id)};
 
-function load(){
+function load(storageKey){
   try{
-    var raw=localStorage.getItem(KEY);
+    var raw=localStorage.getItem(storageKey||KEY);
     if(raw){
       var d=JSON.parse(raw);
       if(d&&Array.isArray(d.expenses))state.expenses=d.expenses.filter(function(e){return e&&isFinite(e.amount)&&typeof e.date==="string"&&typeof e.category==="string"});
@@ -240,12 +275,64 @@ function load(){
 var saveOK=true;
 function save(){
   try{
-    localStorage.setItem(KEY,JSON.stringify({expenses:state.expenses,categories:state.categories,currency:state.currency,month:state.month,incomes:state.incomes,dark:state.dark}));
+    var data=stateData();
+    localStorage.setItem(currentStorageKey,JSON.stringify(data));
     saveOK=true;
   }catch(e){
     if(saveOK)toast("Could not save to this browser. Check that storage is allowed.");
     saveOK=false;
   }
+  if(currentUser&&cloudReady&&!suppressCloudSave)queueCloudSave();
+}
+function stateData(){return{expenses:state.expenses,categories:state.categories,currency:state.currency,month:state.month,incomes:state.incomes,dark:state.dark}}
+function resetState(){state={expenses:[],categories:DEFAULT_CATS.slice(),currency:"EUR",month:"",incomes:[],dark:false}}
+function normalizeCloudData(d){
+  if(!d||typeof d!=="object")return null;
+  var x={expenses:Array.isArray(d.expenses)?d.expenses.filter(function(e){return e&&((typeof e.id==="number"&&isFinite(e.id))||typeof e.id==="string")&&isFinite(e.amount)&&e.amount>0&&validDate(e.date)&&typeof e.category==="string"}):[],incomes:Array.isArray(d.incomes)?d.incomes.filter(function(e){return e&&((typeof e.id==="number"&&isFinite(e.id))||typeof e.id==="string")&&isFinite(e.amount)&&e.amount>0&&validDate(e.date)}):[],categories:Array.isArray(d.categories)?d.categories.filter(function(c){return typeof c==="string"&&c.trim()}):DEFAULT_CATS.slice(),currency:typeof d.currency==="string"&&CURRENCIES.some(function(c){return c[0]===d.currency})?d.currency:"EUR",month:typeof d.month==="string"&&/^\d{4}-\d{2}$/.test(d.month)?d.month:"",dark:!!d.dark};
+  x.expenses.forEach(function(e){delete e.currency;if(x.categories.indexOf(e.category)<0)x.categories.push(e.category)});
+  return x;
+}
+function mergeCloudAndLocal(cloud,local){
+  var merged=normalizeCloudData(cloud)||normalizeCloudData({});
+  local=normalizeCloudData(local)||normalizeCloudData({});
+  var expenseIds=new Set(merged.expenses.map(function(e){return String(e.id)})),incomeIds=new Set(merged.incomes.map(function(e){return String(e.id)}));
+  local.expenses.forEach(function(e){if(!expenseIds.has(String(e.id)))merged.expenses.push(e)});
+  local.incomes.forEach(function(e){if(!incomeIds.has(String(e.id)))merged.incomes.push(e)});
+  local.categories.forEach(function(c){if(!merged.categories.some(function(x){return x.toLowerCase()===c.toLowerCase()}))merged.categories.push(c)});
+  return merged;
+}
+function queueCloudSave(){
+  clearTimeout(cloudTimer);$("syncStatus").textContent="Syncing…";
+  var uid=currentUser.uid,data=stateData();
+  cloudTimer=setTimeout(async function(){
+    cloudTimer=null;if(!currentUser||currentUser.uid!==uid||!cloudReady)return;
+    cloudWriteInFlight=true;
+    try{await setDoc(doc(db,"users",uid,"appData","state"),data);if(currentUser&&currentUser.uid===uid)$("syncStatus").textContent="Synced"}
+    catch(err){if(currentUser&&currentUser.uid===uid){$("syncStatus").textContent="Sync failed";toast("Cloud sync failed. Your data is still saved on this device.")}}
+    finally{cloudWriteInFlight=false}
+  },350);
+}
+function persistLocalOnly(){try{localStorage.setItem(currentStorageKey,JSON.stringify(stateData()))}catch(e){}}
+function showAuthError(msg){$("authError").textContent=msg||""}
+function usernameEmail(value){var name=String(value||"").trim().toLowerCase();if(!/^[a-z0-9][a-z0-9_-]{2,23}$/.test(name))return null;return name+"@login.monthly-expenses-80080.firebaseapp.com"}
+function authErrorText(err){var code=err&&err.code||"";if(code==="auth/email-already-in-use")return"That username is already taken.";if(code==="auth/invalid-credential"||code==="auth/wrong-password"||code==="auth/user-not-found")return"Username or password is incorrect.";if(code==="auth/weak-password")return"Choose a stronger password (at least 8 characters).";if(code==="auth/network-request-failed")return"Connection problem. Check your internet and try again.";return"Could not sign in. Please check your details and try again."}
+async function activateAccount(user){
+  if(cloudUnsub){cloudUnsub();cloudUnsub=null}currentUser=user;cloudReady=false;$("loadingPanel").hidden=false;$("authPanel").hidden=true;$("appMain").hidden=true;$("appControls").hidden=true;
+  $("loadingPanel").querySelector("h2").textContent="Loading your expenses…";
+  var uidKey=KEY+"-"+user.uid,hadUidData=localStorage.getItem(uidKey)!==null,legacyData=!hadUidData&&localStorage.getItem(KEY)!==null;
+  currentStorageKey=hadUidData?uidKey:(legacyData?KEY:uidKey);resetState();load(currentStorageKey);if(!state.month)state.month=todayStr().slice(0,7);var localData=stateData();
+  try{
+    var ref=doc(db,"users",user.uid,"appData","state"),snap=await getDoc(ref),merged;
+    if(snap.exists()){
+      merged=mergeCloudAndLocal(snap.data(),localData);state=merged;
+      if(JSON.stringify(merged)!==JSON.stringify(normalizeCloudData(snap.data())))await setDoc(ref,merged);
+    }else{state=localData;await setDoc(ref,stateData())}
+    currentStorageKey=uidKey;persistLocalOnly();if(legacyData)localStorage.removeItem(KEY);
+    var cs=$("currency");cs.value=state.currency;$("month").value=state.month;document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";
+    $("accountName").textContent="Signed in as "+(user.displayName||String(user.email||"").split("@")[0]);$("syncStatus").textContent="Synced";
+    $("loadingPanel").hidden=true;$("appControls").hidden=false;$("appMain").hidden=false;cloudReady=true;render();
+    cloudUnsub=onSnapshot(ref,function(remote){if(!remote.exists()||cloudWriteInFlight||cloudTimer)return;var incoming=normalizeCloudData(remote.data());if(!incoming)return;state=incoming;if(!state.month)state.month=todayStr().slice(0,7);persistLocalOnly();$("currency").value=state.currency;$("month").value=state.month;document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";render();$("syncStatus").textContent="Synced"},function(){if(currentUser&&currentUser.uid===uid)$("syncStatus").textContent="Offline"});
+  }catch(err){cloudReady=false;$("loadingPanel").hidden=true;$("authPanel").hidden=false;$("appMain").hidden=true;$("appControls").hidden=true;showAuthError("Could not load cloud data. Check your connection and try again.");}
 }
 function pad(n){return n<10?"0"+n:""+n}
 function todayStr(){var d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())}
@@ -615,13 +702,23 @@ function submit(ev){
 
 /* ---------- init ---------- */
 function init(){
-  load();
-  if(!state.month)state.month=todayStr().slice(0,7);
   var cs=$("currency");
-  if(!CURRENCIES.some(function(c){return c[0]===state.currency}))state.currency="EUR";
   CURRENCIES.forEach(function(c){var o=el("option",null,c[1]);o.value=c[0];cs.appendChild(o)});
-  cs.value=state.currency;$("month").value=state.month;
-  document.body.classList.toggle("dark",state.dark);$("themeBtn").textContent=state.dark?"Light mode":"Dark mode";
+  $("authForm").addEventListener("submit",async function(ev){
+    ev.preventDefault();if(authBusy)return;showAuthError();
+    var email=usernameEmail($("authUsername").value),password=$("authPassword").value;
+    if(!email){showAuthError("Use 3–24 characters: letters, numbers, underscores, or hyphens.");return}
+    if(password.length<8){showAuthError("Password must be at least 8 characters.");return}
+    authBusy=true;$("authSubmit").disabled=true;$("authModeBtn").disabled=true;$("authSubmit").textContent=authMode==="signup"?"Creating account…":"Signing in…";
+    try{
+      var credential=authMode==="signup"?await createUserWithEmailAndPassword(auth,email,password):await signInWithEmailAndPassword(auth,email,password);
+      if(authMode==="signup")await updateProfile(credential.user,{displayName:$("authUsername").value.trim().toLowerCase()});
+      $("authPassword").value="";
+    }catch(err){showAuthError(authErrorText(err))}
+    finally{authBusy=false;$("authSubmit").disabled=false;$("authModeBtn").disabled=false;$("authSubmit").textContent=authMode==="signup"?"Create account":"Sign in"}
+  });
+  $("authModeBtn").addEventListener("click",function(){authMode=authMode==="signin"?"signup":"signin";showAuthError();$("authTitle").textContent=authMode==="signup"?"Create your expense account":"Sign in to your expense tracker";$("authSubmit").textContent=authMode==="signup"?"Create account":"Sign in";$("authPassword").setAttribute("autocomplete",authMode==="signup"?"new-password":"current-password");$("authModeBtn").textContent=authMode==="signup"?"I already have an account":"Create a new account"});
+  $("signOutBtn").addEventListener("click",async function(){try{await signOut(auth)}catch(e){toast("Could not sign out. Please try again.")}});
   $("exportBtn").addEventListener("click",exportBackup);
   $("csvBtn").addEventListener("click",exportCSV);
   $("importBtn").addEventListener("click",function(){$("importFile").click()});
@@ -654,7 +751,14 @@ function init(){
   ["amount","date","category"].forEach(function(id){
     $(id).addEventListener("input",function(){setErr(id,{amount:"eAmount",date:"eDate",category:"eCat"}[id])});
   });
-  resetForm();resetIncForm();render();
+  resetForm();resetIncForm();state.month=todayStr().slice(0,7);$("month").value=state.month;
+  onAuthStateChanged(auth,function(user){
+    clearTimeout(cloudTimer);cloudTimer=null;if(cloudUnsub){cloudUnsub();cloudUnsub=null}
+    if(user){activateAccount(user);return}
+    currentUser=null;cloudReady=false;cloudWriteInFlight=false;resetState();
+    $("loadingPanel").hidden=true;$("authPanel").hidden=false;$("appMain").hidden=true;$("appControls").hidden=true;
+    $("authTitle").textContent=authMode==="signup"?"Create your expense account":"Sign in to your expense tracker";
+  });
 }
 init();
 })();
